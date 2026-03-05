@@ -2,29 +2,28 @@ import crypto from "crypto";
 import admin from "firebase-admin";
 
 if (!admin.apps.length) {
-  const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-
   admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount)
+    credential: admin.credential.cert(JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT))
   });
 }
 
 const db = admin.firestore();
 
-function decrypt(text) {
+// AES decrypt
+function decrypt(data) {
+
   const key = crypto
     .createHash("sha256")
-    .update(process.env.AES_SECRET_KEY)
+    .update(process.env.AES_SECRET)
     .digest();
 
-  const parts = text.split(":");
+  const parts = data.split(":");
   const iv = Buffer.from(parts[0], "hex");
-
-  const encryptedText = parts[1];
+  const encrypted = parts[1];
 
   const decipher = crypto.createDecipheriv("aes-256-cbc", key, iv);
 
-  let decrypted = decipher.update(encryptedText, "hex", "utf8");
+  let decrypted = decipher.update(encrypted, "hex", "utf8");
   decrypted += decipher.final("utf8");
 
   return decrypted;
@@ -32,9 +31,10 @@ function decrypt(text) {
 
 export default async function handler(req, res) {
 
+  // ✅ CORS
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
   if (req.method === "OPTIONS") {
     return res.status(200).end();
@@ -48,33 +48,41 @@ export default async function handler(req, res) {
 
     const { studentId, idToken } = req.body;
 
-    const decodedToken = await admin.auth().verifyIdToken(idToken);
-    const uid = decodedToken.uid;
-
-    const teacherDoc = await db.collection("teachers").doc(uid).get();
-
-    if (!teacherDoc.exists) {
-      return res.status(403).json({ error: "Not a teacher" });
+    if (!studentId || !idToken) {
+      return res.status(400).json({ error: "Missing data" });
     }
 
-    const studentDoc = await db.collection("students").doc(studentId).get();
+    const decoded = await admin.auth().verifyIdToken(idToken);
 
-    if (!studentDoc.exists) {
+    if (!decoded) {
+      return res.status(401).json({ error: "Invalid token" });
+    }
+
+    const doc = await db.collection("students").doc(studentId).get();
+
+    if (!doc.exists) {
       return res.status(404).json({ error: "Student not found" });
     }
 
-    const data = studentDoc.data();
+    const data = doc.data();
 
     const phoneMom = decrypt(data.phoneMomEncrypted);
     const phoneDad = decrypt(data.phoneDadEncrypted);
 
-    return res.json({
+    res.status(200).json({
+      studentId,
       phoneMom,
       phoneDad
     });
 
   } catch (err) {
+
     console.error(err);
-    return res.status(500).json({ error: err.message });
+
+    res.status(500).json({
+      error: "Server error",
+      message: err.message
+    });
+
   }
 }
