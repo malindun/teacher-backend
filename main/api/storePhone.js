@@ -1,7 +1,7 @@
 import crypto from "crypto";
 import admin from "firebase-admin";
 
-// 🔐 Initialize Firebase Admin (only once)
+// Initialize Firebase Admin
 if (!admin.apps.length) {
   admin.initializeApp({
     credential: admin.credential.cert(JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT))
@@ -10,7 +10,7 @@ if (!admin.apps.length) {
 
 const db = admin.firestore();
 
-// 🔐 Encryption function
+// AES encryption
 function encrypt(text) {
   const key = crypto
     .createHash("sha256")
@@ -29,12 +29,12 @@ function encrypt(text) {
 
 export default async function handler(req, res) {
 
-  // ✅ CORS headers
+  // ✅ CORS
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
-  // Handle preflight request
+  // Preflight request
   if (req.method === "OPTIONS") {
     return res.status(200).end();
   }
@@ -48,21 +48,19 @@ export default async function handler(req, res) {
     const { studentId, phoneMom, phoneDad, idToken } = req.body;
 
     if (!studentId || !phoneMom || !phoneDad || !idToken) {
-      return res.status(400).json({ error: "Missing fields" });
+      return res.status(400).json({ error: "Missing data" });
     }
 
-    // 🔐 Verify Firebase user
+    // Verify Firebase Auth token
     const decoded = await admin.auth().verifyIdToken(idToken);
 
     if (!decoded) {
-      return res.status(401).json({ error: "Invalid auth token" });
+      return res.status(401).json({ error: "Invalid token" });
     }
 
-    // 🔐 Encrypt numbers
     const momEncrypted = encrypt(phoneMom);
     const dadEncrypted = encrypt(phoneDad);
 
-    // 💾 Save to Firestore
     await db.collection("students").doc(studentId).update({
       phoneMomEncrypted: momEncrypted,
       phoneDadEncrypted: dadEncrypted,
@@ -70,18 +68,18 @@ export default async function handler(req, res) {
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     });
 
-    return res.status(200).json({
+    res.status(200).json({
       success: true,
       studentId
     });
 
-  } catch (error) {
+  } catch (err) {
 
-    console.error("Store phone error:", error);
+    console.error(err);
 
-    return res.status(500).json({
+    res.status(500).json({
       error: "Server error",
-      message: error.message
+      message: err.message
     });
 
   }
