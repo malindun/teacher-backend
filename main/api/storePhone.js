@@ -50,7 +50,7 @@ export default async function handler(req, res) {
     const dadEncrypted = encrypt(phoneDad);
 
     // --- STEP 3: FIRESTORE WRITE ---
-    await db.collection("student_phones").doc(studentId).set({
+    await db.collection("students").doc(studentId).set({
       momEncrypted,
       dadEncrypted,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
