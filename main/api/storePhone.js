@@ -1,20 +1,20 @@
 import crypto from "crypto";
 import admin from "firebase-admin";
 
+// 🔐 Initialize Firebase Admin (only once)
 if (!admin.apps.length) {
-  const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-
   admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount)
+    credential: admin.credential.cert(JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT))
   });
 }
 
 const db = admin.firestore();
 
+// 🔐 Encryption function
 function encrypt(text) {
   const key = crypto
     .createHash("sha256")
-    .update(process.env.AES_SECRET_KEY)
+    .update(process.env.AES_SECRET)
     .digest();
 
   const iv = crypto.randomBytes(16);
@@ -29,10 +29,12 @@ function encrypt(text) {
 
 export default async function handler(req, res) {
 
+  // ✅ CORS headers
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
+  // Handle preflight request
   if (req.method === "OPTIONS") {
     return res.status(200).end();
   }
@@ -42,40 +44,45 @@ export default async function handler(req, res) {
   }
 
   try {
+
     const { studentId, phoneMom, phoneDad, idToken } = req.body;
 
     if (!studentId || !phoneMom || !phoneDad || !idToken) {
-      return res.status(400).json({ error: "Missing data" });
+      return res.status(400).json({ error: "Missing fields" });
     }
 
     // 🔐 Verify Firebase user
-    const decodedToken = await admin.auth().verifyIdToken(idToken);
-    const uid = decodedToken.uid;
+    const decoded = await admin.auth().verifyIdToken(idToken);
 
-    console.log("Verified user:", uid);
-
-    // (Optional) check teacher role
-    const teacherDoc = await db.collection("teachers").doc(uid).get();
-
-    if (!teacherDoc.exists) {
-      return res.status(403).json({ error: "Not a teacher" });
+    if (!decoded) {
+      return res.status(401).json({ error: "Invalid auth token" });
     }
 
+    // 🔐 Encrypt numbers
     const momEncrypted = encrypt(phoneMom);
     const dadEncrypted = encrypt(phoneDad);
 
+    // 💾 Save to Firestore
     await db.collection("students").doc(studentId).update({
       phoneMomEncrypted: momEncrypted,
-      phoneDadEncrypted: dadEncrypted
+      phoneDadEncrypted: dadEncrypted,
+      phoneEncrypted: true,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
     });
 
-    return res.json({
+    return res.status(200).json({
       success: true,
       studentId
     });
 
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ error: err.message });
+  } catch (error) {
+
+    console.error("Store phone error:", error);
+
+    return res.status(500).json({
+      error: "Server error",
+      message: error.message
+    });
+
   }
 }
