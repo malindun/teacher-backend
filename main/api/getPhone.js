@@ -1,88 +1,39 @@
 import crypto from "crypto";
-import admin from "firebase-admin";
-
-if (!admin.apps.length) {
-  admin.initializeApp({
-    credential: admin.credential.cert(JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT))
-  });
-}
-
-const db = admin.firestore();
-
-// AES decrypt
-function decrypt(data) {
-
-  const key = crypto
-    .createHash("sha256")
-    .update(process.env.AES_SECRET)
-    .digest();
-
-  const parts = data.split(":");
-  const iv = Buffer.from(parts[0], "hex");
-  const encrypted = parts[1];
-
-  const decipher = crypto.createDecipheriv("aes-256-cbc", key, iv);
-
-  let decrypted = decipher.update(encrypted, "hex", "utf8");
-  decrypted += decipher.final("utf8");
-
-  return decrypted;
-}
 
 export default async function handler(req, res) {
-
-  // ✅ CORS
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
 
   if (req.method === "OPTIONS") {
     return res.status(200).end();
   }
 
-  if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method not allowed" });
-  }
-
   try {
+    const { encrypted } = req.body;
 
-    const { studentId, idToken } = req.body;
+    const key = crypto
+      .createHash("sha256")
+      .update(process.env.SECRET_KEY)
+      .digest();
 
-    if (!studentId || !idToken) {
-      return res.status(400).json({ error: "Missing data" });
-    }
+    // Splitting the IV from the hash
+    const parts = encrypted.split(":");
+    const iv = Buffer.from(parts.shift(), "hex");
+    const encryptedText = parts.join(":");
 
-    const decoded = await admin.auth().verifyIdToken(idToken);
+    const decipher = crypto.createDecipheriv("aes-256-cbc", key, iv);
 
-    if (!decoded) {
-      return res.status(401).json({ error: "Invalid token" });
-    }
+    let decrypted = decipher.update(encryptedText, "hex", "utf8");
+    decrypted += decipher.final("utf8");
 
-    const doc = await db.collection("students").doc(studentId).get();
-
-    if (!doc.exists) {
-      return res.status(404).json({ error: "Student not found" });
-    }
-
-    const data = doc.data();
-
-    const phoneMom = decrypt(data.phoneMomEncrypted);
-    const phoneDad = decrypt(data.phoneDadEncrypted);
-
-    res.status(200).json({
-      studentId,
-      phoneMom,
-      phoneDad
+    return res.status(200).json({
+      phone: decrypted
     });
 
   } catch (err) {
-
-    console.error(err);
-
-    res.status(500).json({
-      error: "Server error",
-      message: err.message
+    return res.status(500).json({
+      error: err.message
     });
-
   }
 }
