@@ -32,7 +32,7 @@ export default async function handler(req, res) {
     const fcmToken = studentDoc.data().fcmToken;
 
     // 3. Save to Firestore Notifications Collection
-    await db.collection("notifications").add({
+    await db.collection("student_notifications").add({
       studentId,
       title,
       body,
