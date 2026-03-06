@@ -11,7 +11,6 @@ if (!admin.apps.length) {
 }
 
 export default async function handler(req, res) {
-  // CORS Headers for testing
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
@@ -19,31 +18,44 @@ export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).send("Method Not Allowed");
 
   try {
-    const { studentId, title, body } = req.body;
+    const { studentId, title, body } = req.body; // studentId here is the UID
     const db = admin.firestore();
 
-    // 1. Log the attempt in student_notifications
+    // 1. Log notification to the inbox
     const docRef = await db.collection("student_notifications").add({
-      studentId,
+      studentId: studentId, 
       title,
       body,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      status: "pending_fcm" 
+      status: "sent"
     });
 
-    // 2. Try to find the token
-    const studentDoc = await db.collection("students").doc(studentId).get();
-    const fcmToken = studentDoc.exists ? studentDoc.data().fcmToken : null;
+    // 2. Find the student document by ownerUid field
+    const studentQuery = await db.collection("students")
+      .where("ownerUid", "==", studentId)
+      .limit(1)
+      .get();
+
+    if (studentQuery.empty) {
+      return res.status(200).json({ 
+        success: true, 
+        message: "Logged to DB, but no student profile found for this UID.",
+        docId: docRef.id 
+      });
+    }
+
+    const studentData = studentQuery.docs[0].data();
+    const fcmToken = studentData.fcmToken;
 
     if (!fcmToken) {
       return res.status(200).json({ 
         success: true, 
-        message: "Saved to Firestore, but no FCM token found for this student yet.",
-        docId: docRef.id
+        message: "Logged to DB, but student has no FCM token.",
+        docId: docRef.id 
       });
     }
 
-    // 3. Trigger the actual Push Notification
+    // 3. Send the Push Notification
     const message = {
       notification: { title, body },
       token: fcmToken,
@@ -51,10 +63,13 @@ export default async function handler(req, res) {
 
     await admin.messaging().send(message);
 
-    return res.status(200).json({ success: true, message: "Push sent successfully!" });
+    return res.status(200).json({ 
+      success: true, 
+      message: "Push notification sent successfully!" 
+    });
 
   } catch (error) {
-    console.error("Backend Error:", error);
+    console.error("Vercel Error:", error);
     return res.status(500).json({ error: error.message });
   }
 }
