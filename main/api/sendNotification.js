@@ -11,53 +11,50 @@ if (!admin.apps.length) {
 }
 
 export default async function handler(req, res) {
+  // CORS Headers for testing
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  res.setHeader("Access-Control-Allow-Methods", "POST");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
-  if (req.method === "OPTIONS") return res.status(200).end();
+  if (req.method !== "POST") return res.status(405).send("Method Not Allowed");
 
   try {
-    const { studentId, title, body, idToken } = req.body;
-
-    // 1. Verify Teacher Identity
-    await admin.auth().verifyIdToken(idToken);
-
+    const { studentId, title, body } = req.body;
     const db = admin.firestore();
 
-    // 2. Fetch the Student's FCM Token
-    const studentDoc = await db.collection("students").doc(studentId).get();
-    if (!studentDoc.exists) throw new Error("Student not found");
-    
-    const fcmToken = studentDoc.data().fcmToken;
-
-    // 3. Save to Firestore Notifications Collection
-    await db.collection("notifications").add({
+    // 1. Log the attempt in student_notifications
+    const docRef = await db.collection("student_notifications").add({
       studentId,
       title,
       body,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      read: false
+      status: "pending_fcm" 
     });
 
-    // 4. Send the Push Notification if token exists
-    if (fcmToken) {
-      const message = {
-        notification: { title, body },
-        token: fcmToken,
-        webpush: {
-          fcm_options: {
-            link: "https://your-student-site-url.com/notifications"
-          }
-        }
-      };
-      await admin.messaging().send(message);
+    // 2. Try to find the token
+    const studentDoc = await db.collection("students").doc(studentId).get();
+    const fcmToken = studentDoc.exists ? studentDoc.data().fcmToken : null;
+
+    if (!fcmToken) {
+      return res.status(200).json({ 
+        success: true, 
+        message: "Saved to Firestore, but no FCM token found for this student yet.",
+        docId: docRef.id
+      });
     }
 
-    return res.status(200).json({ success: true, pushed: !!fcmToken });
+    // 3. Trigger the actual Push Notification
+    const message = {
+      notification: { title, body },
+      token: fcmToken,
+    };
 
-  } catch (err) {
-    console.error("Notification Error:", err.message);
-    return res.status(500).json({ error: err.message });
+    await admin.messaging().send(message);
+
+    return res.status(200).json({ success: true, message: "Push sent successfully!" });
+
+  } catch (error) {
+    console.error("Backend Error:", error);
+    return res.status(500).json({ error: error.message });
   }
 }
