@@ -1,7 +1,6 @@
 import crypto from "crypto";
 import admin from "firebase-admin";
 
-// Initialize Admin (Singleton)
 if (!admin.apps.length) {
   admin.initializeApp({
     credential: admin.credential.cert({
@@ -13,32 +12,39 @@ if (!admin.apps.length) {
 }
 
 export default async function handler(req, res) {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
-
   if (req.method === "OPTIONS") return res.status(200).end();
 
   try {
-    const { encrypted, idToken } = req.body;
+    const { encryptedList, idToken } = req.body; // Expecting an array of strings
 
-    // 1. SECURITY CHECK: Verify the Teacher's Token
-    if (!idToken) return res.status(401).json({ error: "No authentication token provided" });
+    // 1. Security Check
+    if (!idToken) return res.status(401).json({ error: "Unauthorized" });
     await admin.auth().verifyIdToken(idToken);
 
-    // 2. DECRYPTION LOGIC
     const key = crypto.createHash("sha256").update(process.env.SECRET_KEY).digest();
-    const parts = encrypted.split(":");
-    const iv = Buffer.from(parts.shift(), "hex");
-    const encryptedText = parts.join(":");
 
-    const decipher = crypto.createDecipheriv("aes-256-cbc", key, iv);
-    let decrypted = decipher.update(encryptedText, "hex", "utf8");
-    decrypted += decipher.final("utf8");
+    // 2. Map through the list and decrypt each
+    const decryptedList = encryptedList.map(item => {
+      try {
+        if (!item || item === 'N/A') return 'N/A';
+        
+        const parts = item.split(":");
+        const iv = Buffer.from(parts.shift(), "hex");
+        const encryptedText = parts.join(":");
 
-    return res.status(200).json({ phone: decrypted });
+        const decipher = crypto.createDecipheriv("aes-256-cbc", key, iv);
+        let decrypted = decipher.update(encryptedText, "hex", "utf8");
+        decrypted += decipher.final("utf8");
+        
+        return decrypted;
+      } catch (e) {
+        return "Decryption Error";
+      }
+    });
+
+    return res.status(200).json({ phones: decryptedList });
 
   } catch (err) {
-    return res.status(500).json({ error: "Decryption failed or unauthorized: " + err.message });
+    return res.status(500).json({ error: err.message });
   }
 }
